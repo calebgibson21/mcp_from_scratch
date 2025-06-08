@@ -1,4 +1,5 @@
 from ast import Call
+from cgitb import reset
 from email import message
 from imp import is_frozen
 from math import e
@@ -307,30 +308,62 @@ class MCPServer:
             # write to stdout with new line terminator
             sys.stdout.write(json_response + '\n')
 
-            logger.debug(f"Sent response: {JsonRpcMessage[:100]}...")
+            logger.debug(f"Sent response: {json_response[:100]}...")
         
         except Exception as e:
             logger.error(f"Error writing response: {e}")
+            logger.error(f"Response type: {type(response)}")
+            logger.error(f"Response content: {response}")
+            
             # try to send back error response
             try:
                 error_response = {
                     "jsonrpc": "2.0",
-                    "id": response.get('id'),
+                    "id": response.get('id') if isinstance(response, dict) else None,
                     "error": {
                         "code": -32603,
                         "message": "Response serialization failed"
                     }
                 }
-                json_error = json_dumps(error_response, separators=(',', ':'))
+                json_error = json.dumps(error_response, separators=(',', ':'))
                 sys.stdout.write(json_error + '\n')
             except:
                 logger.error("Failed to send error message")
         
+    # need to flush so it doesn't just sit in the buffer
+    def _flush_stdout(self):
+        """
+        Step 5: Flush stdout to ensure immediate delivery
 
-            
+        Notes: 
+        - Critical for real time communication
+        - Ensures messages are sent immediately 
+        - Should be called after every message
+        """
+        try:
+            sys.stdout.flush()
+            logger.debug("Flushed stdout")
+        except Exception as e:
+            logger.error(f"Error flushing stdout {e}")
 
+    def _create_success_response(self, request_id: Any, result: Any) -> Dict[str, Any]:
+        """Create a JSON-RPC success response."""
+        return {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": result
+        }
 
-    #Todo: Add other event loop steps
+    def _create_error_response(self, request_id: Any, code: int, message: str) -> Dict[str, Any]:
+        """Create a JSON-RPC error response"""
+        return {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "error": {
+                "code": code,
+                "message": message
+            }
+        }
 
 
     def _handle_initialize(self, params: Optional[Dict], request_id: Any) -> Dict[str, Any]:
