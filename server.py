@@ -1,4 +1,5 @@
 from ast import Call
+from email import message
 import sys
 import json 
 import logging
@@ -82,6 +83,191 @@ class MCPServer:
         # update the handlers registry
         self.handlers[method] = handler
 
-    
+    def run(self):
+        """
+        Main event loop implementing the five core steps/
+
+        1. Reads lines from stdin
+        2. Parses each line as JSON
+        3. Dispatches to appropriate handlers
+        4. Writes JSON resonses to stdout
+        5. Flushes stdout after each message
+        """
+
+        logging.info("Starting MCP server event loop")
+        self.running = True
+
+        try:
+            while self.running:
+                # 1. read lines from stdin
+                raw_line = self._read_line_from_stdin()
+                if raw_line is None:
+                    # EOF reached = client closed connection
+                    logging.info("EOF reached on stdin, shutting down")
+                    break
+
+                # 2. parse each line as JSON
+                message = self._parse_json_message(raw_line)
+                if message is None:
+                    # parsing failed - continue to next message
+                    continue
+
+                # 3. dispatch appropriate event handlers
+                response = self._dispatch_message(message)
+
+                # 4. write JSON response to stdout (if response is needed)
+                if response is not None:
+                    self._write_response_to_stdout(response)
+
+                # 5. Flush stdout after each message
+                self._flush_stdout()
+
+        except KeyboardInterrupt:
+            logger.info("Recieved keyboard interrupt, shutting down")
+        except Exception as e:
+            logger.error(f'Unexpected error in the event loop: {e}', exc_info=True)
+        finally:
+            self._cleanup()
         
 
+    def _read_line_from_stdin(self) -> Optional[str]:
+        """
+        STEP 1: First we need to read a complete line from stdin.
+
+        Returns:
+            The line as a string (without newline), or None if EOF
+
+        Notes: 
+            - Blocks until a complete line is available
+            - Return None on EOF (client disconnected)
+            - Handles encoding issues gracefully
+        """
+
+        try: 
+            
+            line = sys.stdin.readline()
+            if not line:
+                return None
+
+            # strip the new line character
+            line = line.rstrip('\n\r')
+
+            # skip empty lines
+            if not line.strip():
+                logger.debug("Skipping empty line")
+                return self._read_line_from_stdin()
+            
+            logger.debug(f'Read line: {line[:100]}...')
+            return line
+
+        except UnicodeDecodeError as e:
+            logger.error(f"Uniconde decode error reading stdin: {e}")
+            return self._read_line_from_stdin() # try next line
+        except Exception as e:
+            logger.error(f"Error reading line from stdin: {e}")
+            return None
+
+    def _parse_json_message(self, raw_line: str) -> Optional[JsonRpcMessage]:
+        """
+        STEP 2: After reading the complete line from stdin, we parse as a JSON-RPC message.
+
+        Args:
+            raw_line: The raw string from stdin
+
+        Returns:
+            Parsed JsonRpcMessage object, or None if parsing fails
+        
+        Notes:
+            - Validates JSON-RPC 2.0 format
+            - Logs parsing errors but continues processing
+            - Returns None for invalid messages
+        """
+        try:
+            # parse the JSON
+            data = json.loads(raw_line)
+            logger.debug(f"Parsed JSON: {data}")
+
+            # validate JSON-RPC format
+            if not isinstance(data, dict):
+                logger.error("Message is not a JSON object")
+                return None
+
+            if data.get('jsonrpc') != '2.0':
+                logger.error(f"Invalid jsonrpc version: {data.get('jsonrpc')}")
+                return None
+
+            # create JsonRpcMessage object
+            message = JsonRpcMessage(
+                jsonrpc=data['jsonrpc'],
+                method=data.get('method'),
+                params=data.get('params'),
+                id=data.get('id'),
+                result=data.get('result'),
+                error=data.get('error')
+            )
+
+            logger.debug(f"Created message: request={message.is_request()}, "
+                        f"notification={message.is_notification()}, "
+                        f"response={message.is_response()}")
+
+            return message
+
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON decode error: {e}")
+            logger.error(f"Invalid JSON line: {raw_line}")
+            return None
+        except Exception as e:
+            logger.error(f"Error parsing message: {e}")
+            return None
+
+
+            
+
+
+    #Todo: Add other event loop steps
+
+
+    def _handle_initialize(self, params: Optional[Dict], request_id: Any) -> Dict[str, Any]:
+        """Handle MCP initialize request."""
+        logger.info("Handling initialize request")
+        
+        # Basic server capabilities
+        capabilities = {
+            "protocol": {
+                "version": "1.0.0"
+            },
+            "capabilities": {
+                "tools": {},
+                "resources": {},
+                "prompts": {}
+            },
+            "serverInfo": {
+                "name": "example-mcp-server",
+                "version": "1.0.0"
+            }
+        }
+        
+        self.initialized = True
+        return capabilities
+    
+    def _handle_initialized(self, params: Optional[Dict], request_id: Any) -> None:
+        """Handle MCP initialized notification."""
+        logger.info("Received initialized notification")
+        # This is a notification - no response needed
+    
+    def _handle_ping(self, params: Optional[Dict], request_id: Any) -> Dict[str, str]:
+        """Handle ping request for connectivity testing."""
+        logger.debug("Handling ping request")
+        return {"status": "pong"}
+
+    def _cleanup(self):
+        """Clean up resources before shutdown."""
+        logger.info("Cleaning up server resources")
+        self.running = False
+    
+        
+if __name__ == "__main__":
+    logger.info("Starting MCP Server...")
+    server = MCPServer()
+    server.run() # Or server.run_event_loop() if you renamed it
+    logger.info("MCP Server shut down.")
