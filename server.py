@@ -1,5 +1,9 @@
 from ast import Call
 from email import message
+from imp import is_frozen
+from math import e
+from operator import methodcaller
+from optparse import Option
 import sys
 import json 
 import logging
@@ -220,6 +224,108 @@ class MCPServer:
             logger.error(f"Error parsing message: {e}")
             return None
 
+        
+    def _dispatch_message(self, message: JsonRpcMessage) -> Optional[Dict[str, Any]]:
+        """
+        STEP 3: Dispatch message to the appropriate handler.
+
+        Args:
+            message: The parsed JSON-RPC message
+
+        Returns:
+            Response dictionary to send back, or None for notifications
+        
+        Notes: 
+            - Routes requests to registered handlers
+            - Handles method not found errors
+            - Generates proper JSON-RPC error responses
+            - Notifications don't generate responses
+        """
+        if message.is_response():
+            # this is a response to our request - shouldn't happen in server. Ignore it
+            logger.warning("Received response message - ignoring")
+            return None
+        
+        if not (message.is_request() or message.is_notification()):
+            logger.error("Message is neither a request or a notification")
+            return None
+
+        method = message.method
+        logger.info(f"Dispatch method: {method}")
+
+        # check if we have a handler for this method
+        if method not in self.handlers:
+            logger.error(f"Not handler for method: {method}")
+
+            # only send error response for request (not notifications)
+            if message.is_request():
+                return self._create_error_response(
+                    message.id,
+                    -32601,
+                    f"Method not found: {method}"
+                )
+            return None
+
+        try:
+            # call the handler
+            hander = self.handlers[method]
+            result = hander(message.params, message.id)
+
+            # only send a response for requests, not notifications
+            if message.is_request():
+                return self._create_success_response(message.id, result)
+            return None
+
+        except Exception as e:
+            logger.error(f"Handler error for {method}: {e}", exc_info=True)
+
+            # also only send an error response for requests
+            if message.is_request():
+                return self._create_error_response(
+                    message.id,
+                    -32603,
+                    f"Internal error: {str(e)}"
+                )
+            return None
+
+    def _write_response_to_stdout(self, response: Dict[str, Any]):
+        """
+        STEP 4: Write JSON response to stdout.
+
+        Args:
+            response: The response dictionary to send
+
+        Notes:
+            - Serializes response as single line JSON
+            - Adds newline terminator
+            - Critical: only protocol messages go to stdout
+        """
+        try: 
+            # serialize as single-line JSON 
+            json_response = json.dumps(response, separators=(',', ':'))
+
+            # write to stdout with new line terminator
+            sys.stdout.write(json_response + '\n')
+
+            logger.debug(f"Sent response: {JsonRpcMessage[:100]}...")
+        
+        except Exception as e:
+            logger.error(f"Error writing response: {e}")
+            # try to send back error response
+            try:
+                error_response = {
+                    "jsonrpc": "2.0",
+                    "id": response.get('id'),
+                    "error": {
+                        "code": -32603,
+                        "message": "Response serialization failed"
+                    }
+                }
+                json_error = json_dumps(error_response, separators=(',', ':'))
+                sys.stdout.write(json_error + '\n')
+            except:
+                logger.error("Failed to send error message")
+        
 
             
 
