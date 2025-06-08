@@ -2,6 +2,8 @@
 
 This project is a Python-based implementation of a Model Context Protocol (MCP) server. It handles communication with an MCP client using JSON-RPC 2.0 messages exchanged via standard input (stdin) and standard output (stdout).
 
+It was inspired by Jack Herington's [Buid a custom MCP server in 15 mins](https://youtu.be/nTMSyldeVSw?si=3cZfjtGR4JyVdLVZ) video. I thought it was a great way to get a good understanding of the underpinnings of an MCP server before jumping into libraries. 
+
 ## Features
 
 *   **JSON-RPC 2.0 Compliant:** Adheres to the JSON-RPC 2.0 specification for message formatting and processing.
